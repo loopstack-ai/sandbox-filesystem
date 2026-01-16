@@ -1,21 +1,26 @@
-# @loopstack/create-value-tool
+# @loopstack/sandbox-filesystem
+
 > A module for the [Loopstack AI](https://loopstack.ai) automation framework.
 
-This module provides a tool for creating and debugging values in Loopstack workflows with built-in logging and flexible type support.
+This module provides secure, controlled filesystem operations within Docker sandbox environments for Loopstack workflows.
 
 ## Overview
 
-The Create Value Tool enables workflows to create, transform, and debug values during execution. It accepts any valid JSON-compatible value type and returns it, making it invaluable for debugging template expressions and reassigning values.
+The Sandbox Filesystem module enables workflows to perform file and directory operations in isolated Docker containers. It provides a comprehensive set of tools for reading, writing, listing, and managing files within sandbox environments, ensuring secure execution of filesystem operations.
 
-By using this tool, you'll be able to:
+By using this module, you'll be able to:
 
-- Debug template expressions by logging their evaluated results
-- Initialize workflow state variables with computed values
-- Transform and reassign values using template expressions
-- Verify data structures at any point in your workflow
-- Support all JSON-compatible types (strings, numbers, objects, arrays, booleans, null)
+- Create, read, update, and delete files within sandbox containers
+- List directory contents with recursive options
+- Create directories with automatic parent directory creation
+- Get detailed file and directory metadata
+- Check for file/directory existence
+- Handle both text and binary file content using UTF-8 or base64 encoding
+- Perform all operations within the security boundary of Docker containers
 
-This tool is essential for workflows that need to debug complex expressions, initialize context variables, or transform data between workflow steps.
+This module is essential for workflows that need to manipulate files in isolated environments, such as code execution sandboxes, build environments, or secure file processing pipelines.
+
+**Note:** This module requires `@loopstack/sandbox-tool` as a dependency. The Docker sandbox containers must be initialized using `SandboxInit` and destroyed using `SandboxDestroy` from the `@loopstack/sandbox-tool` module. The filesystem tools operate on containers that have been created by the sandbox-tool.
 
 ## Installation
 
@@ -40,13 +45,13 @@ docker compose up -d
 #### As Node Dependency via Npm:
 
 ```bash
-npm install --save @loopstack/create-value-tool
+npm install --save @loopstack/sandbox-filesystem
 ```
 
 #### OR: Copy Sources via Loopstack CLI
 
 ```bash
-loopstack add @loopstack/create-value-tool
+loopstack add @loopstack/sandbox-filesystem
 ```
 
 > `loopstack add` copies the source files into your `src` directory. This is a great way to explore the code to learn new concepts or add own customizations.
@@ -55,17 +60,17 @@ loopstack add @loopstack/create-value-tool
 
 ### 1. Import the Module
 
-Add `CreateValueModule` to your `default.module.ts` (included in the skeleton app) or to your own module:
+Add `SandboxFilesystemModule` to your `default.module.ts` (included in the skeleton app) or to your own module:
 
 ```typescript
 import { Module } from '@nestjs/common';
 import { LoopCoreModule } from '@loopstack/core';
 import { CoreUiModule } from '@loopstack/core-ui-module';
+import { SandboxFilesystemModule } from '@loopstack/sandbox-filesystem';
 import { DefaultWorkspace } from './default.workspace';
-import { CreateValueToolModule } from './create-value-tool';
 
 @Module({
-  imports: [LoopCoreModule, CoreUiModule, CreateValueToolModule],
+  imports: [LoopCoreModule, CoreUiModule, SandboxFilesystemModule],
   providers: [DefaultWorkspace],
 })
 export class DefaultModule {}
@@ -73,13 +78,22 @@ export class DefaultModule {}
 
 ### 2. Use in Your Workflow
 
-Inject the tool in your workflow class using the @Tool() decorator:
+Inject the tools in your workflow class using the @Tool() decorator:
 
 ```typescript
 import { Injectable } from '@nestjs/common';
 import { BlockConfig, Tool, WithState } from '@loopstack/common';
 import { WorkflowBase } from '@loopstack/core';
-import { CreateValue } from './create-value-tool';
+import {
+  SandboxWriteFile,
+  SandboxReadFile,
+  SandboxListDirectory,
+  SandboxCreateDirectory,
+  SandboxDelete,
+  SandboxExists,
+  SandboxFileInfo,
+} from '@loopstack/sandbox-filesystem';
+import { SandboxInit, SandboxDestroy } from '@loopstack/sandbox-tool';
 import { z } from 'zod';
 
 @Injectable()
@@ -87,50 +101,143 @@ import { z } from 'zod';
   configFile: __dirname + '/my.workflow.yaml',
 })
 @WithState(z.object({
-  config: z.any().optional(),
+  containerId: z.string().optional(),
+  fileContent: z.string().optional(),
+  fileList: z.array(z.any()).optional(),
 }))
 export class MyWorkflow extends WorkflowBase {
   
-  @Tool() createValue: CreateValue;
+  // Sandbox lifecycle tools (from @loopstack/sandbox-tool)
+  @Tool() sandboxInit: SandboxInit;
+  @Tool() sandboxDestroy: SandboxDestroy;
+  
+  // Filesystem tools (from @loopstack/sandbox-filesystem)
+  @Tool() sandboxWriteFile: SandboxWriteFile;
+  @Tool() sandboxReadFile: SandboxReadFile;
+  @Tool() sandboxListDirectory: SandboxListDirectory;
+  @Tool() sandboxCreateDirectory: SandboxCreateDirectory;
+  @Tool() sandboxDelete: SandboxDelete;
+  @Tool() sandboxExists: SandboxExists;
+  @Tool() sandboxFileInfo: SandboxFileInfo;
   
 }
 ```
 
-And use it in your YAML workflow configuration:
+And use them in your YAML workflow configuration:
 
 ```yaml
 # src/my.workflow.yaml
 transitions:
-  # Debug a template expression
-  - id: debug_expression
+  # Initialize the sandbox container (required before filesystem operations)
+  - id: init_sandbox
     from: start
-    to: process
+    to: sandbox_ready
     call:
-      - tool: createValue
+      - tool: sandboxInit
         args:
-          input: ${ args.userId }
-
-  # Initialize a complex object
-  - id: create_config
-    from: start
-    to: process
-    call:
-      - tool: createValue
-        args:
-          input:
-            environment: production
-            timeout: 30
-            retries: 3
-            endpoints:
-              - https://api.example.com
-              - https://backup.example.com
+          containerId: my-sandbox
+          imageName: node:18
+          containerName: my-filesystem-sandbox
+          projectOutPath: /tmp/workspace
+          rootPath: workspace
         assign:
-          config: ${ result.data }
+          containerId: ${ result.data.containerId }
+
+  # Create a directory
+  - id: create_dir
+    from: sandbox_ready
+    to: dir_created
+    call:
+      - tool: sandboxCreateDirectory
+        args:
+          containerId: ${ containerId }
+          path: /workspace/output
+          recursive: true
+
+  # Write a file
+  - id: write_file
+    from: dir_created
+    to: file_written
+    call:
+      - tool: sandboxWriteFile
+        args:
+          containerId: ${ containerId }
+          path: /workspace/output/result.txt
+          content: "Hello from sandbox!"
+          encoding: utf8
+          createParentDirs: true
+
+  # Read the file
+  - id: read_file
+    from: file_written
+    to: file_read
+    call:
+      - tool: sandboxReadFile
+        args:
+          containerId: ${ containerId }
+          path: /workspace/output/result.txt
+          encoding: utf8
+        assign:
+          fileContent: ${ result.data.content }
+
+  # List directory contents
+  - id: list_dir
+    from: file_read
+    to: dir_listed
+    call:
+      - tool: sandboxListDirectory
+        args:
+          containerId: ${ containerId }
+          path: /workspace/output
+          recursive: false
+        assign:
+          fileList: ${ result.data.entries }
+
+  # Check file existence
+  - id: check_exists
+    from: dir_listed
+    to: existence_checked
+    call:
+      - tool: sandboxExists
+        args:
+          containerId: ${ containerId }
+          path: /workspace/output/result.txt
+
+  # Get file info
+  - id: get_info
+    from: existence_checked
+    to: info_retrieved
+    call:
+      - tool: sandboxFileInfo
+        args:
+          containerId: ${ containerId }
+          path: /workspace/output/result.txt
+
+  # Delete the file
+  - id: delete_file
+    from: info_retrieved
+    to: file_deleted
+    call:
+      - tool: sandboxDelete
+        args:
+          containerId: ${ containerId }
+          path: /workspace/output/result.txt
+          force: true
+
+  # Destroy the sandbox container (cleanup)
+  - id: destroy_sandbox
+    from: file_deleted
+    to: end
+    call:
+      - tool: sandboxDestroy
+        args:
+          containerId: ${ containerId }
+          removeContainer: true
 ```
 
 ## About
 
-Author: Jakob Klippel
+Author: Tobias Blättermann, Jakob Klippel
 
 License: Apache-2.0
 
@@ -138,4 +245,4 @@ License: Apache-2.0
 
 - [Loopstack Documentation](https://loopstack.ai)
 - [Getting Started with Loopstack](https://loopstack.ai)
-- For more examples how to use this tool look for `@loopstack/create-value-tool` in the [Loopstack Registry](https://loopstack.ai/registry)
+- For more examples how to use this tool look for `@loopstack/sandbox-filesystem` in the [Loopstack Registry](https://loopstack.ai/registry)
