@@ -1,0 +1,7 @@
+{
+  "name": "@loopstack/sandbox-filesystem",
+  "description": "Secure, controlled filesystem operations within Docker sandbox environments",
+  "organization": "loopstack-ai",
+  "author": "Jakob Klippel",
+  "license": "Apache-2.0"
+}
