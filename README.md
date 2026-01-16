@@ -66,11 +66,12 @@ Add `SandboxFilesystemModule` to your `default.module.ts` (included in the skele
 import { Module } from '@nestjs/common';
 import { LoopCoreModule } from '@loopstack/core';
 import { CoreUiModule } from '@loopstack/core-ui-module';
+import { SandboxToolModule } from '@loopstack/sandbox-tool';
 import { SandboxFilesystemModule } from '@loopstack/sandbox-filesystem';
 import { DefaultWorkspace } from './default.workspace';
 
 @Module({
-  imports: [LoopCoreModule, CoreUiModule, SandboxFilesystemModule],
+  imports: [LoopCoreModule, CoreUiModule, SandboxToolModule, SandboxFilesystemModule],
   providers: [DefaultWorkspace],
 })
 export class DefaultModule {}
